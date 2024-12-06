@@ -42,6 +42,7 @@ RUN python3 -m pip install wandb
 RUN python3 -m pip install scikit-learn
 RUN python3 -m pip install scipy
 RUN python3 -m pip install bitsandbytes
+RUN python3 -m pip install "pydantic<2.0"
 RUN python3 -m pip install sentencepiece
 
 # Install additional dependencies

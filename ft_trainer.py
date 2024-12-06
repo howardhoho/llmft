@@ -13,7 +13,6 @@ from transformers.trainer_pt_utils import (
     distributed_broadcast_scalars,
     distributed_concat,
     find_batch_size,
-    get_model_param_count,
     get_module_class_from_name,
     get_parameter_names,
     nested_concat,
@@ -71,6 +70,8 @@ if is_sagemaker_mp_enabled():
 logger = logging.getLogger(__name__)
 
 TRAINER_STATE_NAME = "trainer_state.json"
+def get_model_param_count(model):
+    return sum(p.numel() for p in model.parameters())
 
 
 class CustomCallback(TrainerCallback):
