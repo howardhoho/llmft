@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export PROJECT_DIR=/llmft
+export PROJECT_DIR=/content/llmft
 
 source $PROJECT_DIR/scripts/misc/setup.sh
 source $PROJECT_DIR/llmft_env/bin/activate
