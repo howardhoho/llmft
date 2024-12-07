@@ -1,6 +1,6 @@
 from options import DataTrainingArguments, WandbArguments, FtArguments
 from utils import create_dir
-from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_less_than_1_11
+from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.trainer_pt_utils import (
     DistributedLengthGroupedSampler,
     DistributedSamplerWithLoop,
@@ -22,7 +22,7 @@ from transformers.trainer_pt_utils import (
     nested_xla_mesh_reduce,
     reissue_pt_warnings,
 )
-from transformers.trainer_utils import ShardedDDPOption, speed_metrics, has_length, HPSearchBackend, TrainOutput, EvalLoopOutput, denumpify_detensorize
+from transformers.trainer_utils import speed_metrics, has_length, HPSearchBackend, TrainOutput, EvalLoopOutput, denumpify_detensorize
 from transformers.utils import is_torch_tpu_available, is_sagemaker_mp_enabled, is_apex_available
 from transformers.integrations import TensorBoardCallback, WandbCallback, is_fairscale_available, hp_params
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
@@ -50,6 +50,18 @@ import time
 import math
 import sys
 from tqdm.auto import tqdm
+
+def is_torch_less_than_1_11():
+    version = torch.__version__.split("+")[0]  # Get version number without build info
+    major, minor, *_ = map(int, version.split("."))
+    return major < 1 or (major == 1 and minor < 11)
+
+from enum import Enum
+
+class ShardedDDPOption(Enum):
+    SIMPLE = "simple"
+    FULL_SHARD = "full_shard"
+    OFFLOAD = "offload"
 
 if is_apex_available():
     from apex import amp
