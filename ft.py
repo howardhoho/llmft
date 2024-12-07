@@ -25,6 +25,7 @@ import datasets
 from datasets import ClassLabel, Value
 import numpy as np
 import torch
+import evaluate
 
 import evaluate
 import transformers
@@ -591,14 +592,11 @@ def main():
         # use default metrics
         metric_script = f"{os.environ['PROJECT_DIR']}/metrics/glue.py"
         if data_args.task_name == "mnli-original":
-            metric = datasets.load_metric(path=metric_script, config_name="mnli",
-                                          cache_dir=data_args.dataset_cache_dir, keep_in_memory=False)
+            metric = evaluate.load(metric_script, config_name="mnli",)
         else:
-            metric = datasets.load_metric(path=metric_script, config_name=data_args.task_name,
-                                          cache_dir=data_args.dataset_cache_dir, keep_in_memory=False)
+            metric = evaluate.load(metric_script, config_name=data_args.task_name,)
     else:
-        metric = datasets.load_metric(
-            "accuracy", cache_dir=data_args.dataset_cache_dir, keep_in_memory=False)        
+        metric = evaluate.load("accuracy",)        
 
     # You can define your custom compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
     # predictions and label_ids field) and has to return a dictionary string to float.
