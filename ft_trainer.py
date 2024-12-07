@@ -24,9 +24,15 @@ from transformers.trainer_pt_utils import (
 )
 from transformers.trainer_utils import speed_metrics, has_length, HPSearchBackend, TrainOutput, EvalLoopOutput, denumpify_detensorize
 from transformers.utils import is_torch_tpu_available, is_sagemaker_mp_enabled, is_apex_available
-from transformers.integrations import TensorBoardCallback, WandbCallback, is_fairscale_available, hp_params
+from transformers.integrations import TensorBoardCallback, WandbCallback, hp_params
+try:
+    import transformers.integrations.fairscale
+    is_fairscale_available = True
+except ImportError:
+    is_fairscale_available = False
+
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
-from transformers.deepspeed import deepspeed_init
+from deepspeed import initialize as deepspeed_init
 from transformers.trainer_callback import TrainerState
 from transformers import (
     Trainer,
@@ -72,7 +78,7 @@ if is_torch_tpu_available(check_device=False):
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
 
-if is_fairscale_available():
+if is_fairscale_available:
     from fairscale.optim import OSS
 
 if is_sagemaker_mp_enabled():
