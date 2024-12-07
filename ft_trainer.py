@@ -33,6 +33,7 @@ except ImportError:
 
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
 from deepspeed import initialize as deepspeed_init
+import deepspeed
 from transformers.trainer_callback import TrainerState
 from transformers import (
     Trainer,
@@ -454,14 +455,19 @@ class FtTrainer(Trainer):
             or self.fsdp is not None
         )
         if args.deepspeed:
-            deepspeed_engine, optimizer, lr_scheduler = deepspeed_init(
-                self, num_training_steps=max_steps, resume_from_checkpoint=resume_from_checkpoint
+            deepspeed_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+                model=self.model,  # Pass the model
+                optimizer=self.optimizer,  # Use existing optimizer or None
+                lr_scheduler=self.lr_scheduler,  # Use existing scheduler or None
+                model_parameters=self.model.parameters(),  # Model parameters
+                config=args.deepspeed  # Path to DeepSpeed config
             )
-            self.model = deepspeed_engine.module
-            self.model_wrapped = deepspeed_engine
-            self.deepspeed = deepspeed_engine
-            self.optimizer = optimizer
-            self.lr_scheduler = lr_scheduler
+            # Update the Trainer's references
+            self.model = deepspeed_engine.module  # Get the wrapped model
+            self.model_wrapped = deepspeed_engine  # Update wrapped model
+            self.deepspeed = deepspeed_engine  # Store the engine
+            self.optimizer = optimizer  # Update optimizer
+            self.lr_scheduler = lr_scheduler  # Update scheduler
         elif not delay_optimizer_creation:
             self.create_optimizer_and_scheduler(num_training_steps=max_steps)
 
