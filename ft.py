@@ -592,9 +592,9 @@ def main():
         # use default metrics
         metric_script = f"{os.environ['PROJECT_DIR']}/metrics/glue.py"
         if data_args.task_name == "mnli-original":
-            metric = evaluate.load(metric_script, config_name="mnli",)
+            metric = evaluate.load('glue', config_name="mnli",)
         else:
-            metric = evaluate.load(metric_script, config_name=data_args.task_name,)
+            metric = evaluate.load('glue', config_name=data_args.task_name,)
     else:
         metric = evaluate.load("accuracy",)        
 
