@@ -1233,3 +1233,49 @@ class FtTrainer(Trainer):
             logits = logits[0]
 
         return (loss, logits, labels)
+
+
+class FtDistillationTrainer(FtTrainer):
+    def __init__(
+        self,
+        student_model: Union[PreTrainedModel, nn.Module],
+        teacher_model: Union[PreTrainedModel, nn.Module],
+        *args,
+        distillation_temperature: float = 2.0,
+        alpha_distillation: float = 0.5,
+        **kwargs
+    ):
+        super().__init__(student_model, *args, **kwargs)
+        self.teacher_model = teacher_model
+        self.teacher_model.eval()  # Set teacher model to evaluation mode
+        self.distillation_temperature = distillation_temperature
+        self.alpha_distillation = alpha_distillation
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels", None)
+
+        # Forward pass for student
+        outputs_student = model(**inputs)
+        logits_student = outputs_student.logits
+
+        # Forward pass for teacher (detached from computation graph)
+        with torch.no_grad():
+            outputs_teacher = self.teacher_model(**inputs)
+            logits_teacher = outputs_teacher.logits
+
+        # Standard task loss
+        loss_fct = nn.CrossEntropyLoss()
+        task_loss = loss_fct(logits_student.view(-1, logits_student.size(-1)), labels.view(-1))
+
+        # Distillation loss
+        logits_student_scaled = logits_student / self.distillation_temperature
+        logits_teacher_scaled = logits_teacher / self.distillation_temperature
+        distillation_loss = nn.KLDivLoss(reduction="batchmean")(
+            nn.functional.log_softmax(logits_student_scaled, dim=-1),
+            nn.functional.softmax(logits_teacher_scaled, dim=-1),
+        )
+
+        # Combined loss
+        loss = self.alpha_distillation * distillation_loss + (1 - self.alpha_distillation) * task_loss
+
+        return (loss, outputs_student) if return_outputs else loss
