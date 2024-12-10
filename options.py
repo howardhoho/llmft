@@ -337,19 +337,27 @@ class DistillationModelArguments:
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
 
-    student_model_name_or_path: str = field(
-        default=None,
-        metadata={"help": "Path to the pretrained student model or model identifier from huggingface.co/models"}
-    )
-    teacher_model_name_or_path: str = field(
-        default=None,
-        metadata={"help": "Path to the pretrained teacher model or model identifier from huggingface.co/models"}
-    )
     model_name_or_path: str = field(
         metadata={
             "help": "Path to pretrained model",
             "choices": SUPPORTED_MODELS
         }
+    )
+    student_model_name_or_path: str = field(
+        default=None,
+        metadata={"help": "Path to the pretrained student model or model identifier from huggingface.co/models"}
+    )
+    teacher_model_path: str = field(
+        default=None,
+        metadata={"help": "Path to the pretrained teacher model or model identifier from huggingface.co/models"}
+    )
+    distillation_temperature: float = field(
+        default=2.0,
+        metadata={"help": "Temperature for distillation logits softening"}
+    )
+    alpha_distillation: float = field(
+        default=0.5,
+        metadata={"help": "Weight for the distillation loss vs task loss"}
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -389,10 +397,10 @@ class DistillationModelArguments:
 
     def to_dict(self):
         """
-        Serializes this instance while replace `Enum` by their values (for JSON serialization support). It obfuscates
+        Serializes this instance while replacing `Enum` by their values (for JSON serialization support). It obfuscates
         the token values by removing their value.
         """
-        # filter out fields that are defined as field(init=False)
+        # Filter out fields that are defined as field(init=False)
         d = dict((field.name, getattr(self, field.name))
                  for field in fields(self) if field.init)
 

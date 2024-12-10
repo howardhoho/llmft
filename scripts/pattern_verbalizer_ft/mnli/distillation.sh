@@ -31,10 +31,11 @@ do
         deepspeed \
             --include localhost:0 \
             --master_port $port \
-            $PROJECT_DIR/ft.py \
+            $PROJECT_DIR/distillation_ft.py \
             --wandb_project_name llmft-experiments \
             --wandb_group_name pattern-verbalizer-ft-$adapter_type \
             --student_model_name_or_path $student_model_name_or_path \
+            --model_name_or_path $student_model_name_or_path \
             --teacher_model_path $teacher_model_path \
             --cache_dir $HF_MODELS_CACHE \
             --task_name $task_name \

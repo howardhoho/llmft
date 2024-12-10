@@ -49,7 +49,7 @@ from transformers.utils.versions import require_version
 from options import DataTrainingArguments, DistillationModelArguments, WandbArguments, FtArguments
 from utils import create_dir, get_timestamp
 from task_utils import task_to_keys, load_glue_datasets, load_hans_dataset, load_mnli_mismatched_dataset, load_paws_qqp_dataset, load_cola_ood_dataset, save_dataset
-from ft_trainer import FtTrainer
+from ft_trainer import FtTrainer, FtDistillationTrainer
 from models.gptj_wrapper import GPTJWithClassifier, GPTJWithLMClassifier
 from models.opt_wrapper import OPTWithClassifier, OPTWithLMClassifier
 from models.llama_wrapper import LlamaWithLMClassifier
@@ -658,11 +658,52 @@ def main():
     else:
         eval_datasets = None
     # Load student and teacher models
+    # Create the student model config without LoRA-specific settings
+    config = AutoConfig.from_pretrained(
+        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        num_labels=num_labels,
+        finetuning_task=data_args.task_name,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+    )
+
+    # Remove LoRA-specific fields if not needed
+    # Ensure only task-relevant fields are set for the student
+    config.classifier_type = ft_args.classifier_type
+    config.untie_embeddings = ft_args.untie_embeddings
+
+    # Remove adapter-related configurations for the student
+    config.use_adapters = False  # Explicitly disable adapters
+    config.adapter_type = None
+    config.adapter_dim = None
+    config.lora_alpha = None
+    config.use_soft_prompt = False  # Disable soft prompts if not used
+    config.num_soft_prompt_tokens = None
+
+    # Student model
     student_model = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path, config=config
     )
+
+    teacher_config = AutoConfig.from_pretrained(
+                            model_args.teacher_model_path,
+                            num_labels=num_labels,  # Ensure compatibility with the task
+                            cache_dir=model_args.cache_dir,
+                            revision=model_args.model_revision,
+                            use_auth_token=True if model_args.use_auth_token else None,
+                        )
+
+    # Remove adapter-related configurations for the student
+    teacher_config.use_adapters = False  # Explicitly disable adapters
+    teacher_config.adapter_type = None
+    teacher_config.adapter_dim = None
+    teacher_config.lora_alpha = None
+    teacher_config.use_soft_prompt = False  # Disable soft prompts if not used
+    teacher_config.num_soft_prompt_tokens = None
+
     teacher_model = AutoModelForSequenceClassification.from_pretrained(
-        ft_args.teacher_model_path, config=config
+        model_args.teacher_model_path, config=teacher_config
     )
 
     # Initialize trainer with distillation
