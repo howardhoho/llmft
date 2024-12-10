@@ -41,6 +41,7 @@ from transformers import (
     TrainingArguments,
     default_data_collator,
     set_seed,
+    OPTForCausalLM
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
@@ -658,6 +659,7 @@ def main():
     else:
         eval_datasets = None
     # Load student and teacher models
+    
     # Create the student model config without LoRA-specific settings
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
@@ -666,9 +668,9 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
+        pad_token_id=tokenizer.pad_token_id,
     )
 
-    # Remove LoRA-specific fields if not needed
     # Ensure only task-relevant fields are set for the student
     config.classifier_type = ft_args.classifier_type
     config.untie_embeddings = ft_args.untie_embeddings
@@ -680,11 +682,7 @@ def main():
     config.lora_alpha = None
     config.use_soft_prompt = False  # Disable soft prompts if not used
     config.num_soft_prompt_tokens = None
-
-    # Student model
-    student_model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path, config=config
-    )
+    config.untie_embeddings = ft_args.untie_embeddings
 
     teacher_config = AutoConfig.from_pretrained(
                             model_args.teacher_model_path,
@@ -692,6 +690,7 @@ def main():
                             cache_dir=model_args.cache_dir,
                             revision=model_args.model_revision,
                             use_auth_token=True if model_args.use_auth_token else None,
+                            pad_token_id=tokenizer.pad_token_id,
                         )
 
     # Remove adapter-related configurations for the student
@@ -702,10 +701,47 @@ def main():
     teacher_config.use_soft_prompt = False  # Disable soft prompts if not used
     teacher_config.num_soft_prompt_tokens = None
 
-    teacher_model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.teacher_model_path, config=teacher_config
-    )
+    teacher_config.untie_embeddings = ft_args.untie_embeddings
 
+
+    if ft_args.target_tokens is not None:
+        student_model = OPTWithLMClassifier.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            ignore_mismatched_sizes=True,
+        )
+        teacher_model = OPTWithLMClassifier.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=teacher_config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            ignore_mismatched_sizes=True,
+        )
+    else:
+        student_model = OPTWithClassifier.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            ignore_mismatched_sizes=True,
+        )
+        teacher_model = OPTWithClassifier.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=teacher_config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            ignore_mismatched_sizes=True,
+        )
     # Initialize trainer with distillation
     trainer = FtDistillationTrainer(
         student_model=student_model,
@@ -719,8 +755,8 @@ def main():
         data_args=data_args,
         wandb_args=wandb_args,
         ft_args=ft_args,
-        distillation_temperature=ft_args.distillation_temperature,
-        alpha_distillation=ft_args.alpha_distillation,
+        distillation_temperature=model_args.distillation_temperature,
+        alpha_distillation=model_args.alpha_distillation,
     )
 
     # Training

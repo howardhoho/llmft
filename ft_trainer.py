@@ -1262,7 +1262,6 @@ class FtDistillationTrainer(FtTrainer):
         with torch.no_grad():
             outputs_teacher = self.teacher_model(**inputs)
             logits_teacher = outputs_teacher.logits
-
         # Standard task loss
         loss_fct = nn.CrossEntropyLoss()
         task_loss = loss_fct(logits_student.view(-1, logits_student.size(-1)), labels.view(-1))
@@ -1270,10 +1269,11 @@ class FtDistillationTrainer(FtTrainer):
         # Distillation loss
         logits_student_scaled = logits_student / self.distillation_temperature
         logits_teacher_scaled = logits_teacher / self.distillation_temperature
-        distillation_loss = nn.KLDivLoss(reduction="batchmean")(
-            nn.functional.log_softmax(logits_student_scaled, dim=-1),
-            nn.functional.softmax(logits_teacher_scaled, dim=-1),
-        )
+        distillation_loss = F.kl_div(
+            F.log_softmax(logits_student / model_args.distillation_temperature, dim=-1),
+            F.softmax(logits_teacher / model_args.distillation_temperature, dim=-1),
+            reduction="batchmean",
+        ) * (model_args.distillation_temperature ** 2)
 
         # Combined loss
         loss = self.alpha_distillation * distillation_loss + (1 - self.alpha_distillation) * task_loss
