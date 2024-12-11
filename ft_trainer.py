@@ -1,6 +1,6 @@
 from options import DataTrainingArguments, WandbArguments, FtArguments
 from utils import create_dir
-from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_less_than_1_11
+from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.trainer_pt_utils import (
     DistributedLengthGroupedSampler,
     DistributedSamplerWithLoop,
@@ -13,7 +13,6 @@ from transformers.trainer_pt_utils import (
     distributed_broadcast_scalars,
     distributed_concat,
     find_batch_size,
-    get_model_param_count,
     get_module_class_from_name,
     get_parameter_names,
     nested_concat,
@@ -23,11 +22,18 @@ from transformers.trainer_pt_utils import (
     nested_xla_mesh_reduce,
     reissue_pt_warnings,
 )
-from transformers.trainer_utils import ShardedDDPOption, speed_metrics, has_length, HPSearchBackend, TrainOutput, EvalLoopOutput, denumpify_detensorize
+from transformers.trainer_utils import speed_metrics, has_length, HPSearchBackend, TrainOutput, EvalLoopOutput, denumpify_detensorize
 from transformers.utils import is_torch_tpu_available, is_sagemaker_mp_enabled, is_apex_available
-from transformers.integrations import TensorBoardCallback, WandbCallback, is_fairscale_available, hp_params
+from transformers.integrations import TensorBoardCallback, WandbCallback, hp_params
+try:
+    import transformers.integrations.fairscale
+    is_fairscale_available = True
+except ImportError:
+    is_fairscale_available = False
+
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
-from transformers.deepspeed import deepspeed_init
+from deepspeed import initialize as deepspeed_init
+import deepspeed
 from transformers.trainer_callback import TrainerState
 from transformers import (
     Trainer,
@@ -52,6 +58,18 @@ import math
 import sys
 from tqdm.auto import tqdm
 
+def is_torch_less_than_1_11():
+    version = torch.__version__.split("+")[0]  # Get version number without build info
+    major, minor, *_ = map(int, version.split("."))
+    return major < 1 or (major == 1 and minor < 11)
+
+from enum import Enum
+
+class ShardedDDPOption(Enum):
+    SIMPLE = "simple"
+    FULL_SHARD = "full_shard"
+    OFFLOAD = "offload"
+
 if is_apex_available():
     from apex import amp
 
@@ -61,7 +79,7 @@ if is_torch_tpu_available(check_device=False):
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
 
-if is_fairscale_available():
+if is_fairscale_available:
     from fairscale.optim import OSS
 
 if is_sagemaker_mp_enabled():
@@ -71,6 +89,8 @@ if is_sagemaker_mp_enabled():
 logger = logging.getLogger(__name__)
 
 TRAINER_STATE_NAME = "trainer_state.json"
+def get_model_param_count(model):
+    return sum(p.numel() for p in model.parameters())
 
 
 class CustomCallback(TrainerCallback):
@@ -435,14 +455,19 @@ class FtTrainer(Trainer):
             or self.fsdp is not None
         )
         if args.deepspeed:
-            deepspeed_engine, optimizer, lr_scheduler = deepspeed_init(
-                self, num_training_steps=max_steps, resume_from_checkpoint=resume_from_checkpoint
+            deepspeed_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+                model=self.model,  # Pass the model
+                optimizer=self.optimizer,  # Use existing optimizer or None
+                lr_scheduler=self.lr_scheduler,  # Use existing scheduler or None
+                model_parameters=self.model.parameters(),  # Model parameters
+                config=args.deepspeed  # Path to DeepSpeed config
             )
-            self.model = deepspeed_engine.module
-            self.model_wrapped = deepspeed_engine
-            self.deepspeed = deepspeed_engine
-            self.optimizer = optimizer
-            self.lr_scheduler = lr_scheduler
+            # Update the Trainer's references
+            self.model = deepspeed_engine.module  # Get the wrapped model
+            self.model_wrapped = deepspeed_engine  # Update wrapped model
+            self.deepspeed = deepspeed_engine  # Store the engine
+            self.optimizer = optimizer  # Update optimizer
+            self.lr_scheduler = lr_scheduler  # Update scheduler
         elif not delay_optimizer_creation:
             self.create_optimizer_and_scheduler(num_training_steps=max_steps)
 
@@ -1208,3 +1233,49 @@ class FtTrainer(Trainer):
             logits = logits[0]
 
         return (loss, logits, labels)
+
+
+class FtDistillationTrainer(FtTrainer):
+    def __init__(
+        self,
+        student_model: Union[PreTrainedModel, nn.Module],
+        teacher_model: Union[PreTrainedModel, nn.Module],
+        *args,
+        distillation_temperature: float = 2.0,
+        alpha_distillation: float = 0.5,
+        **kwargs
+    ):
+        super().__init__(student_model, *args, **kwargs)
+        self.teacher_model = teacher_model
+        self.teacher_model.eval()  # Set teacher model to evaluation mode
+        self.distillation_temperature = distillation_temperature
+        self.alpha_distillation = alpha_distillation
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels", None)
+
+        # Forward pass for student
+        outputs_student = model(**inputs)
+        logits_student = outputs_student.logits
+
+        # Forward pass for teacher (detached from computation graph)
+        with torch.no_grad():
+            outputs_teacher = self.teacher_model(**inputs)
+            logits_teacher = outputs_teacher.logits
+        # Standard task loss
+        loss_fct = nn.CrossEntropyLoss()
+        task_loss = loss_fct(logits_student.view(-1, logits_student.size(-1)), labels.view(-1))
+
+        # Distillation loss
+        logits_student_scaled = logits_student / self.distillation_temperature
+        logits_teacher_scaled = logits_teacher / self.distillation_temperature
+        distillation_loss = F.kl_div(
+            F.log_softmax(logits_student / model_args.distillation_temperature, dim=-1),
+            F.softmax(logits_teacher / model_args.distillation_temperature, dim=-1),
+            reduction="batchmean",
+        ) * (model_args.distillation_temperature ** 2)
+
+        # Combined loss
+        loss = self.alpha_distillation * distillation_loss + (1 - self.alpha_distillation) * task_loss
+
+        return (loss, outputs_student) if return_outputs else loss

@@ -41,15 +41,17 @@ from transformers import (
     TrainingArguments,
     default_data_collator,
     set_seed,
+    OPTForCausalLM,
+    AutoTokenizer,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from options import DataTrainingArguments, ModelArguments, WandbArguments, FtArguments
+from options import DataTrainingArguments, DistillationModelArguments, WandbArguments, FtArguments
 from utils import create_dir, get_timestamp
 from task_utils import task_to_keys, load_glue_datasets, load_hans_dataset, load_mnli_mismatched_dataset, load_paws_qqp_dataset, load_cola_ood_dataset, save_dataset
-from ft_trainer import FtTrainer
+from ft_trainer import FtTrainer, FtDistillationTrainer
 from models.gptj_wrapper import GPTJWithClassifier, GPTJWithLMClassifier
 from models.opt_wrapper import OPTWithClassifier, OPTWithLMClassifier
 from models.llama_wrapper import LlamaWithLMClassifier
@@ -71,7 +73,7 @@ def main():
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
     parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments, WandbArguments, FtArguments))
+        (DistillationModelArguments, DataTrainingArguments, TrainingArguments, WandbArguments, FtArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -210,110 +212,104 @@ def main():
     config.use_soft_prompt = ft_args.use_soft_prompt
     config.num_soft_prompt_tokens = ft_args.num_soft_prompt_tokens
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(student_model_name, use_fast=False)
 
-    if "gpt-j" in model_args.model_name_or_path:
-        if ft_args.target_tokens is not None:
-            model = GPTJWithLMClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-            )
-        else:
-            model = GPTJWithClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-            )
+    # if "gpt-j" in model_args.model_name_or_path:
+    #     if ft_args.target_tokens is not None:
+    #         model = GPTJWithLMClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #         )
+    #     else:
+    #         model = GPTJWithClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #         )
 
-        # We need to add a padding token for gpt-j
-        tokenizer.pad_token = tokenizer.eos_token
-        config.pad_token_id = tokenizer.eos_token_id
+    #     # We need to add a padding token for gpt-j
+    #     tokenizer.pad_token = tokenizer.eos_token
+    #     config.pad_token_id = tokenizer.eos_token_id
 
-    elif "facebook/opt" in model_args.model_name_or_path:
-        if ft_args.target_tokens is not None:
-            model = OPTWithLMClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-            )
-        else:
-            model = OPTWithClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-            )
+    # elif "facebook/opt" in model_args.model_name_or_path:
+    #     if ft_args.target_tokens is not None:
+    #         model = OPTWithLMClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #         )
+    #     else:
+    #         model = OPTWithClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #         )
 
-    elif "gpt-neox" in model_args.model_name_or_path or "pythia" in model_args.model_name_or_path or "RedPajama-INCITE" in model_args.model_name_or_path:
-        if ft_args.target_tokens is not None:
-            model = GPTNeoXWithLMClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=False,
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-                torch_dtype=torch.float16,
-            )
+    # elif "gpt-neox" in model_args.model_name_or_path or "pythia" in model_args.model_name_or_path or "RedPajama-INCITE" in model_args.model_name_or_path:
+    #     if ft_args.target_tokens is not None:
+    #         model = GPTNeoXWithLMClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=False,
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #             torch_dtype=torch.float16,
+    #         )
 
-            # We need to add a padding token for gptneox
-            tokenizer.pad_token = tokenizer.eos_token
-            model.config.pad_token_id = tokenizer.convert_tokens_to_ids(
-                tokenizer.pad_token)
-            tokenizer.padding_side = "right"
+    #         # We need to add a padding token for gptneox
+    #         tokenizer.pad_token = tokenizer.eos_token
+    #         model.config.pad_token_id = tokenizer.convert_tokens_to_ids(
+    #             tokenizer.pad_token)
+    #         tokenizer.padding_side = "right"
 
-        else:
-            raise NotImplementedError(
-                f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
+    #     else:
+    #         raise NotImplementedError(
+    #             f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
     
-    elif "llama" in model_args.model_name_or_path:
-        if ft_args.target_tokens is not None:
-            model = LlamaWithLMClassifier.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=False,
-                config=config,
-                cache_dir=model_args.cache_dir,
-                revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
-                ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-                torch_dtype=torch.float16,
-            )
+    # elif "llama" in model_args.model_name_or_path:
+    #     if ft_args.target_tokens is not None:
+    #         model = LlamaWithLMClassifier.from_pretrained(
+    #             model_args.model_name_or_path,
+    #             from_tf=False,
+    #             config=config,
+    #             cache_dir=model_args.cache_dir,
+    #             revision=model_args.model_revision,
+    #             use_auth_token=True if model_args.use_auth_token else None,
+    #             ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    #             torch_dtype=torch.float16,
+    #         )
 
-            # We need to add a padding token for llama
-            tokenizer.pad_token = tokenizer._convert_id_to_token(
-                config.pad_token_id)  # let's use the <unk> token
-            tokenizer.padding_side = "right"
+    #         # We need to add a padding token for llama
+    #         tokenizer.pad_token = tokenizer._convert_id_to_token(
+    #             config.pad_token_id)  # let's use the <unk> token
+    #         tokenizer.padding_side = "right"
 
-        else:
-            raise NotImplementedError(
-                f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
+    #     else:
+    #         raise NotImplementedError(
+    #             f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
 
-    else:
-        raise NotImplementedError(
-            f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
+    # else:
+    #     raise NotImplementedError(
+    #         f"Unsupported model_name_or_path: {model_args.model_name_or_path}")
 
     # --------------- Preprocessing the raw_datasets ---------------
 
@@ -657,8 +653,114 @@ def main():
             eval_datasets = eval_dataset
     else:
         eval_datasets = None
-    trainer = FtTrainer(
-        model=model,
+    # Load student and teacher models
+    
+    # Create the student model config without LoRA-specific settings
+    config = AutoConfig.from_pretrained(
+        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        num_labels=num_labels,
+        finetuning_task=data_args.task_name,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+        pad_token_id=tokenizer.pad_token_id,
+    )
+
+    # Ensure only task-relevant fields are set for the student
+    config.classifier_type = ft_args.classifier_type
+    config.untie_embeddings = ft_args.untie_embeddings
+
+    # Remove adapter-related configurations for the student
+    config.use_adapters = False  # Explicitly disable adapters
+    config.adapter_type = None
+    config.adapter_dim = None
+    config.lora_alpha = None
+    config.use_soft_prompt = False  # Disable soft prompts if not used
+    config.num_soft_prompt_tokens = None
+    config.untie_embeddings = ft_args.untie_embeddings
+
+    teacher_config = AutoConfig.from_pretrained(
+                            model_args.teacher_model_path,
+                            num_labels=num_labels,  # Ensure compatibility with the task
+                            cache_dir=model_args.cache_dir,
+                            revision=model_args.model_revision,
+                            use_auth_token=True if model_args.use_auth_token else None,
+                            pad_token_id=tokenizer.pad_token_id,
+                        )
+
+    # Remove adapter-related configurations for the student
+    teacher_config.use_adapters = False  # Explicitly disable adapters
+    teacher_config.adapter_type = None
+    teacher_config.adapter_dim = None
+    teacher_config.lora_alpha = None
+    teacher_config.use_soft_prompt = False  # Disable soft prompts if not used
+    teacher_config.num_soft_prompt_tokens = None
+
+    teacher_config.untie_embeddings = ft_args.untie_embeddings
+
+    
+    # student_model.cuda()
+    # if ft_args.target_tokens is not None:
+    #     student_model = OPTWithLMClassifier.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #         config=config,
+    #         cache_dir=model_args.cache_dir,
+    #         revision=model_args.model_revision,
+    #         use_auth_token=True if model_args.use_auth_token else None,
+    #         ignore_mismatched_sizes=True,
+    #     )
+    #     teacher_model = OPTWithLMClassifier.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #         config=teacher_config,
+    #         # cache_dir=model_args.cache_dir,
+    #         revision=model_args.model_revision,
+    #         use_auth_token=True if model_args.use_auth_token else None,
+    #         ignore_mismatched_sizes=True,
+    #     )
+    # else:
+    #     student_model = OPTWithClassifier.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #         config=config,
+    #         cache_dir=model_args.cache_dir,
+    #         revision=model_args.model_revision,
+    #         use_auth_token=True if model_args.use_auth_token else None,
+    #         ignore_mismatched_sizes=True,
+    #     )
+    #     teacher_model = OPTWithClassifier.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         from_tf=bool(".ckpt" in model_args.model_name_or_path),
+    #         config=teacher_config,
+    #         # cache_dir=model_args.cache_dir,
+    #         revision=model_args.model_revision,
+    #         use_auth_token=True if model_args.use_auth_token else None,
+    #         ignore_mismatched_sizes=True,
+        # )
+    teacher_model = OPTForCausalLM.from_pretrained(model_args.teacher_model_path)
+    student_model = OPTForCausalLM.from_pretrained(model_args.model_name_or_path)
+    # Align the model configuration with the tokenizer
+    # teacher_model.model.decoder.embed_tokens = torch.nn.Embedding(
+    #         num_embeddings=teacher_model.config.vocab_size,
+    #         embedding_dim=teacher_model.config.hidden_size,
+    #         padding_idx=teacher_model.config.pad_token_id,
+    #     )
+    # if teacher_model.config.pad_token_id >= teacher_model.config.vocab_size:
+    #     raise ValueError(f"pad_token_id ({teacher_model.config.pad_token_id}) exceeds vocab size ({teacher_model.config.vocab_size})")
+
+    teacher_model.cuda()
+
+    print("Tokenizer pad_token_id:", tokenizer.pad_token_id)
+    print("Tokenizer vocab size:", tokenizer.vocab_size)
+
+    # Check the model's configuration
+    print("Model config pad_token_id:", model.config.pad_token_id)
+    print("Model config vocab size:", model.config.vocab_size)
+    # Initialize trainer with distillation
+    trainer = FtDistillationTrainer(
+        student_model=student_model,
+        teacher_model=teacher_model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_datasets,
@@ -668,7 +770,8 @@ def main():
         data_args=data_args,
         wandb_args=wandb_args,
         ft_args=ft_args,
-        callbacks=None
+        distillation_temperature=model_args.distillation_temperature,
+        alpha_distillation=model_args.alpha_distillation,
     )
 
     # Training

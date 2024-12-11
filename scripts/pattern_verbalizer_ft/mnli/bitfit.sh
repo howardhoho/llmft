@@ -28,7 +28,7 @@ do
     for data_seed in "0" "1" "2" "3" "4" "5" "6" "7" "8" "9"
     do
         $PYTHON_BIN/deepspeed \
-            --include localhost:0,1,2,3,4,5,6,7 \
+            --include localhost:0 \
             --master_port $port \
             $PROJECT_DIR/ft.py \
             --wandb_project_name llmft-experiments \

@@ -1,0 +1,13 @@
+#!/bin/bash
+sudo apt update
+sudo apt install build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libsqlite3-dev libreadline-dev libffi-dev curl libbz2-dev liblzma-dev
+curl -O https://www.python.org/ftp/python/3.8.10/Python-3.8.10.tar.xz
+tar -xf Python-3.8.10.tar.xz
+cd Python-3.8.10
+./configure --enable-optimizations --enable-loadable-sqlite-extensions
+make -j 2
+sudo make altinstall
+echo creating venv
+python3.8 -m venv llmft_env
+source llmft_env/bin/activate
+pip install -r requirements_1.txt
